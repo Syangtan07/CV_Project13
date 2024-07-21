@@ -1,0 +1,324 @@
+pip install opencv-python
+#import tkintter
+from tkinter import *
+from tkinter import font
+import tkinter as tk
+#from tkinter import ttkthemes
+from tkinter import messagebox
+import tkinter.simpledialog as sd
+from ttkthemes import ThemedStyle
+from PIL import Image, ImageTk
+import os
+import subprocess
+from facenet_pytorch import MTCNN, InceptionResnetV1
+import torch
+from torchvision import datasets
+from torch.utils.data import DataLoader
+from PIL import Image
+import cv2
+import time
+import csv
+from datetime import datetime
+
+def open_file():
+    mtcnn0 = MTCNN(image_size=240, margin=0, keep_all=False, min_face_size=40) # keep_all=False
+    mtcnn = MTCNN(image_size=240, margin=0, keep_all=True, min_face_size=40) # keep_all=True
+    resnet = InceptionResnetV1(pretrained='vggface2').eval() 
+    dataset=datasets.ImageFolder('D:\\face\\MTCNN-PROJECT-main\\MTCNN\\data') # photos folder path 
+    idx_to_class = {i:c for c,i in dataset.class_to_idx.items()} # accessing names of peoples from folder names
+      
+    def collate_fn(x):
+        return x[0]
+
+    loader = DataLoader(dataset, collate_fn=collate_fn)
+
+    name_list = [] # list of names corrospoing to cropped photos
+    embedding_list = [] # list of embeding matrix after conversion from cropped faces to embedding matrix using resnet
+
+    for img, idx in loader:
+        face, prob = mtcnn0(img, return_prob=True) 
+        if face is not None and prob>0.92:
+            emb = resnet(face.unsqueeze(0)) 
+            embedding_list.append(emb.detach()) 
+            name_list.append(idx_to_class[idx])        
+
+    # save data
+    data = [embedding_list, name_list] 
+    torch.save(data, 'data.pt') # saving data.pt file
+
+    # loading data.pt file
+    load_data = torch.load('data.pt') 
+    embedding_list = load_data[0] 
+    name_list = load_data[1] 
+
+    # Using webcam recognize face
+
+    # loading data.pt file
+    load_data = torch.load('data.pt') 
+    embedding_list = load_data[0] 
+    name_list = load_data[1] 
+
+    cam = cv2.VideoCapture(0) 
+    written_names = []
+
+    while True:
+        ret, frame = cam.read()
+        if not ret:
+            print("fail to grab frame, try again")
+            break
+
+        img = Image.fromarray(frame)
+        img_cropped_list, prob_list = mtcnn(img, return_prob=True) 
+
+        if img_cropped_list is not None:
+            boxes, _ = mtcnn.detect(img)
+
+            for i, prob in enumerate(prob_list):
+                if prob>0.90:
+                    emb = resnet(img_cropped_list[i].unsqueeze(0)).detach() 
+
+                    dist_list = [] # list of matched distances, minimum distance is used to identify the person
+
+                    for idx, emb_db in enumerate(embedding_list):
+                        dist = torch.dist(emb, emb_db).item()
+                        dist_list.append(dist)
+
+                    min_dist = min(dist_list) # get minumum dist value
+                    min_dist_idx = dist_list.index(min_dist) # get minumum dist index
+                    name = name_list[min_dist_idx] # get name corrosponding to minimum dist
+
+                    box = boxes[i] 
+
+                    original_frame = frame.copy() # storing copy of frame before drawing on it
+
+                    if min_dist<0.90 and name not in written_names:
+                        frame = cv2.putText(frame, name+' '+str(min_dist), (int(box[0]),int(box[1])), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0),1, cv2.LINE_AA)
+                        data_dict = {"Name": [name], "Time": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")]}
+
+                        # Write the data to a CSV file
+                        with open('D:\\face\\MTCNN-PROJECT-main\\MTCNN\\recog.csv', mode='a') as file:
+                            writer = csv.writer(file)
+                            if file.tell() == 0:  # Check if file is empty
+                                writer.writerow(["Name", "Time"])  # Write header row
+                            writer.writerow([name, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+                        written_names.append(name)
+                        frame = cv2.rectangle(frame, (int(box[0]),int(box[1])) , (int(box[2]),int(box[3])), (255,0,0), 2)
+
+        cv2.imshow("IMG", frame)
+
+
+        k = cv2.waitKey(1)
+        if k%256==27: # ESC
+            print('Esc pressed, closing...')
+            break
+
+        elif k%256==32: # space to save image
+            print('Enter your name :')
+            name = input()
+
+            # create directory if not exists
+            if not os.path.exists(f'D:/face/MTCNN-PROJECT-main/MTCNN/data/{name}'):
+                os.mkdir(f'D:/face/MTCNN-PROJECT-main/MTCNN/data/{name}')
+
+            img_name = "D:/face\MTCNN-PROJECT-main\MTCNN\data/{}/{}.jpg".format(name, int(time.time()))
+            cv2.imwrite(img_name, original_frame)
+            print(" saved: {}".format(img_name))
+
+
+    cam.release()
+    cv2.destroyAllWindows()
+
+
+
+
+def show():
+    loading_frame = tk.Frame(root, bg="#f7f7f7")
+    loading_frame.pack(side=tk.BOTTOM)
+
+    # Create a label to display the animation
+    loading_label = tk.Label(loading_frame, text="Loading...", font=("Helvetica", 18), bg="#f7f7f7")
+    loading_label.pack(padx=20, pady=20)
+
+    # Use the after method to delay showing the animation for 2 seconds
+    root.after(2000, lambda: loading_frame.pack_forget())
+    # Replace this line with the code to display your data
+    # For example:
+    # data_label = tk.Label(root, text="Here's your data!", font=("Helvetica", 18))
+    # data_label.pack(padx=20, pady=20)
+    os.startfile('D:\\face\\MTCNN-PROJECT-main\\MTCNN\\recog.csv')
+    
+
+def help():
+    help_text = """
+    Welcome to the IIMS College Attendance System!
+
+    This program is designed to help you track your class attendance.
+
+    To get started, click the Start button and select the file containing your class roster.
+
+    Once you've selected the file, the program will automatically detect your students' names and begin tracking attendance.
+
+    Use the Stop button to end attendance tracking and save the results to a file.
+
+    You can also use the Show button to display a summary of attendance data for your class.
+
+    If you have any questions or issues, please don't hesitate to contact the support team at support@iims.edu.np.
+    """
+    messagebox.showinfo("Help", help_text)
+    import os
+def add():
+
+    # Load the Haar Cascade face classifier
+    face_cascade = cv2.CascadeClassifier('D:\\face\\haarcascade_frontalface_default.xml')
+
+    # Initialize the video capture object
+    cap = cv2.VideoCapture(0)
+
+    # Prompt user for the person's name
+    #person_name = input("Enter the person's name: ")
+    person_name = sd.askstring("Add Person", "Enter the person's name:")
+    if person_name:
+        # Add the person to the listbox
+        listbox.insert(tk.END, person_name)
+
+    # Create a folder for the person's face images
+    folder_path = os.path.join('D:\\face\\MTCNN-PROJECT-main\\MTCNN\\data', person_name)
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+
+    # Capture 100 face images
+    face = None
+    count = 0
+    while count < 50:
+        # Capture frame-by-frame
+        ret, frame = cap.read()
+
+        # Convert the frame to grayscale
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # Detect faces in the grayscale frame
+        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+
+        # Iterate over each detected face and save it as an image
+        for (x,y,w,h) in faces:
+            # Extract the face from the frame
+            face = frame[y:y+h, x:x+w]
+
+            # Resize the face to 100x100 pixels
+            face = cv2.resize(face, (100, 100))
+
+            # Save the face as an image in the person's folder
+            cv2.imwrite(os.path.join(folder_path, 'face_{}.jpg'.format(count)), face)
+
+            # Increment the count of captured faces
+            count += 1
+
+        # Display the captured face
+        cv2.imshow('Captured Face', face)
+
+        # Press 'q' to exit
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    # Release the video capture object
+    cap.release()
+    # Close all windows
+    cv2.destroyAllWindows()
+
+
+
+
+     
+    
+
+root = tk.Tk()
+
+# Set the window title and icon
+root.title("5TH Project")
+root.geometry("800x500")
+
+# Set the window background color
+root.config(bg="#cfe4f7")
+
+
+
+# Create a top frame with a label
+top_frame = tk.Frame(root, height=100)
+top_frame.pack(fill=tk.X)
+
+# Define gradient colors
+gradient_colors = ("#34495E", "#2C3E50")
+
+# Create a canvas for the gradient background
+gradient_canvas = tk.Canvas(top_frame, width=root.winfo_screenwidth(), height=100, bg="#2C3E50", highlightthickness=0)
+gradient_canvas.place(x=0, y=0)
+
+# Create gradient rectangle
+gradient_canvas.create_rectangle(0, 0, root.winfo_screenwidth(), 100, fill="", outline="")
+
+# Add gradient colors to rectangle
+for i in range(len(gradient_colors)):
+    gradient_canvas.create_line(0, i, root.winfo_screenwidth(), i, fill=gradient_colors[i], width=1)
+    
+# Create a label on the top frame
+title_label = tk.Label(top_frame, text="Attendance System", font=("Helvetica", 30), bg="#2C3E50", fg="#ECF0F1")
+title_label.place(relx=0.5, rely=0.5, anchor="center")
+
+
+
+# Create a frame for the logo image
+logo_frame = tk.Frame(root, bg="#cfe4f7")
+logo_frame.pack()
+
+# Load the image using PIL
+image = Image.open('C:\\Users\\VICTUS\\OneDrive\\Desktop\\images.png')             
+
+# Scale the image to double the size
+width, height = image.size
+image = image.resize((int(width*0.8), int(height*0.8)))
+
+# Create a PhotoImage object from the image
+photo = ImageTk.PhotoImage(image)
+
+# Add the image to the label in the logo frame
+logo_label=tk.Label(logo_frame, image=photo, bg="#cfe4f7")
+logo_label.pack(pady=20)
+
+text_label = tk.Label(logo_frame, text="""5th SEMESTER PROJECT ON\nAutomated Attendance System using MTCNN\nIIMS College""",
+                      font=("Helvetica", 18), bg="#cfe4f7", fg="#283142", justify="center", padx=20)
+text_label.pack()
+
+
+#Create a frame for the buttons
+button_frame = tk.Frame(root, bg="#cfe4f7")
+button_frame.pack()
+
+# Create three buttons in the button frame
+start_button = tk.Button(button_frame, text="Start", width=10, height=4, bg="#00a896", fg="#f7f7f7", font=("Helvetica", 18), command=open_file)
+start_button.pack(side=tk.LEFT, padx=20, pady=20)
+
+show_button = tk.Button(button_frame, text="Show", width=10, height=4, bg="#283142", fg="#f7f7f7", font=("Helvetica", 18), command=show)
+show_button.pack(side=tk.LEFT, padx=20, pady=20)
+
+help_button = tk.Button(button_frame, text="Help", width=10, height=4, bg="#00a896", fg="#f7f7f7", font=("Helvetica", 18), command=help)
+help_button.pack(side=tk.LEFT, padx=20, pady=20)
+
+
+
+
+
+# Create the listbox
+listbox = tk.Listbox(root)
+listbox.pack()
+
+add_button = tk.Button(button_frame, text="Add", width=10, height=4, bg="#00a896", fg="#f7f7f7", font=("Helvetica", 18), command=add)
+add_button.pack(side=tk.LEFT, padx=20, pady=20)
+
+
+# Make the window resizable
+root.resizable(True, True)
+
+# Set the minimum window size
+root.minsize(800, 500)
+
+root.mainloop()
